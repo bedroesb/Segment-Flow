@@ -41,8 +41,11 @@ process splitStacks {
     // https://github.com/nextflow-io/nextflow/issues/3595 should track this
     num_substacks = params.num_substacks.replace(",", " ")
     overlap = params.overlap.replace(",", " ")
+    substack_memory_fraction = params.containsKey('substack_memory_fraction') && params.substack_memory_fraction != null \
+        ? params.substack_memory_fraction \
+        : 0.125
     def mem_arg = (params.containsKey('memory_per_job') && params.memory_per_job) \
-        ? "--memory-per-job ${(params.memory_per_job as nextflow.util.MemoryUnit).toBytes()}" \
+        ? "--memory-per-job ${(params.memory_per_job as nextflow.util.MemoryUnit).toBytes()} --memory-safety-factor ${substack_memory_fraction}" \
         : ""
     """
     python ${moduleDir}/resources/usr/bin/create_splits.py \

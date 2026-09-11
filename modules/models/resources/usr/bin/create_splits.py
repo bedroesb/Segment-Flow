@@ -43,8 +43,20 @@ if __name__ == "__main__":
         type=int,
         help="Memory available per runModel job in bytes (used to compute substack size dynamically).",
     )
+    parser.add_argument(
+        "--memory-safety-factor",
+        required=False,
+        default=1.0,
+        type=float,
+        help=(
+            "Fraction of --memory-per-job used when dynamically calculating "
+            "the maximum raw-image substack size. Must be > 0 and <= 1."
+        ),
+    )
 
     args = parser.parse_args()
+    if not 0 < args.memory_safety_factor <= 1:
+        parser.error("--memory-safety-factor must be > 0 and <= 1")
 
     # Load the csv file
     img_csv_fpath = Path(args.img_csv)
@@ -100,8 +112,9 @@ if __name__ == "__main__":
             )  # conservative fallback
         # Compute the maximum substack size: dynamic if memory_per_job provided, else use constant
         if args.memory_per_job is not None:
+            effective_memory = int(args.memory_per_job * args.memory_safety_factor)
             max_substack_size = compute_max_substack_size(
-                memory_bytes=args.memory_per_job,
+                memory_bytes=effective_memory,
                 dtype=img_dtype,
                 image_shape=img_shape,
             )
