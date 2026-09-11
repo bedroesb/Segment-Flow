@@ -119,8 +119,9 @@ process setupModel {
 process runModel {
     label 'gpu_process'
     conda "${moduleDir}/envs/${task.ext.condaDir}/conda_${params.model}.yml"
-    // Symlink to where AIoD Napari plugin file watcher is looking
-    publishDir "$mask_output_dir"
+    // Intermediate substacks are kept out of the watched mask directory by default.
+    // Napari should see the final combined mask, not partial offset tiles.
+    publishDir "$mask_output_dir", enabled: (params.publish_intermediate_masks?.toString()?.toBoolean() ?: false)
 
     input:
     tuple val(image_name), val(meta), val(mask_fname), val(idxs), path(image_path)
