@@ -424,6 +424,8 @@ if __name__ == "__main__":
         # Free up memory (though too late at this point)
         aiod_rle.save_encoding(rle=encoded_masks, fpath=save_path)
     del combined_masks
-    # Remove the (symlinked) individual masks now that they are combined
+    # Remove published intermediate masks when they exist.
     for mask_path in cli_args.masks:
-        (Path(cli_args.output_dir) / mask_path).unlink()
+        published_mask = Path(cli_args.output_dir) / mask_path
+        if published_mask.exists():
+            published_mask.unlink()

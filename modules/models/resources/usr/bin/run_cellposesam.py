@@ -56,26 +56,34 @@ if __name__ == "__main__":
         num_slices=cli_args.num_slices,
         dim_order="CZYX",
     )
-    # Squeeze the image to avoid specifying a z or channel axis for single slice/channel images
-    # As Cellpose does some checking underneath which leads to errors
-    img = img.squeeze()
-    # Ensure config has the correct channel and z axis
-    shape = img.shape
-    if shape[0] == cli_args.channels:
-        config["channel_axis"] = 0
-    elif shape[1] == cli_args.channels:
-        config["channel_axis"] = 1
-    else:
-        config["channel_axis"] = None
-    if shape[0] == cli_args.num_slices:
-        config["z_axis"] = 0
-    elif shape[1] == cli_args.num_slices:
-        config["z_axis"] = 1
-    else:
-        config["z_axis"] = None
-    # Ensure 3D properly set
-    # TODO: Does Cellpose-SAM still need this or does it better handle 3D in 2D mode?
-    config["do_3D"] = cli_args.num_slices > 1
+    # load_img() above explicitly returns CZYX
+    axes = list("CZYX")
+    
+    # Remove singleton C/Z dimensions while keeping track of their meaning.
+    # Do not infer axes from dimension lengths.
+    for axis_name in ("C", "Z"):
+        axis_idx = axes.index(axis_name)
+    
+        if img.shape[axis_idx] == 1:
+            img = img.squeeze(axis=axis_idx)
+            axes.pop(axis_idx)
+    
+    config["channel_axis"] = (
+        axes.index("C")
+        if "C" in axes
+        else None
+    )
+    
+    config["z_axis"] = (
+        axes.index("Z")
+        if "Z" in axes
+        else None
+    )
+    
+    config["do_3D"] = (
+        config["z_axis"] is not None
+        and img.shape[config["z_axis"]] > 1
+    )
 
     device = get_device(model_type=get_model_name_type(cli_args.model_type))
 
