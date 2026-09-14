@@ -90,8 +90,14 @@ def load_img(
     dim_order = kwargs.pop("dim_order", "CZYX")
     # TODO: Better to return Dask and index as needed?
     # NOTE: here rbg converted to channels; napari treats rbg separately
+    # Keep large microscopy inputs lazy until after selecting the requested
+    # substack.
     img = aiod_io.load_image_data(
-        fpath, dim_order=dim_order, rgb_as_channels=True, **kwargs
+        fpath,
+        dim_order=dim_order,
+        as_dask=True,
+        rgb_as_channels=True,
+        **kwargs,
     )
     # Extract the start and end indices in each dim
     start_x, end_x, start_y, end_y, start_z, end_z = idxs
@@ -106,8 +112,9 @@ def load_img(
         "X": np.s_[start_x:end_x],
         "Y": np.s_[start_y:end_y],
     }
-    # Slice the image based on the given indices
-    return img[tuple(slices[dim] for dim in dim_order)]
+    # Slice lazily, then materialize only the requested tile for the model.
+    img = img[tuple(slices[dim] for dim in dim_order)]
+    return img.compute()
 
 
 def validate_dims(
