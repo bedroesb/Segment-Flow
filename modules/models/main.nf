@@ -119,8 +119,11 @@ process setupModel {
 process runModel {
     label 'gpu_process'
     conda "${moduleDir}/envs/${task.ext.condaDir}/conda_${params.model}.yml"
-    // Intermediate substacks are kept out of the watched mask directory by default.
-    // Napari should see the final combined mask, not partial offset tiles.
+    // runModel writes each substack into the task work directory. Only publish
+    // these partial masks when explicitly requested: Napari watches
+    // mask_output_dir and can otherwise mistake the first arriving substack
+    // for a complete mask, creating a tile-sized Labels layer that later
+    // substacks cannot be inserted into at their global XYZ offsets.
     publishDir "$mask_output_dir", enabled: (params.publish_intermediate_masks?.toString()?.toBoolean() ?: false)
 
     input:
@@ -139,7 +142,7 @@ process runModel {
     python ${moduleDir}/resources/usr/bin/run_${params.model}.py \
     --img-path ${image_path} \
     --mask-fname "${mask_fname}" \
-    --output-dir "${mask_output_dir}" \
+    --output-dir . \
     --model-chkpt ${model_chkpt} \
     --model-type "${model_type}" \
     --model-config ${model_config} \
@@ -157,6 +160,8 @@ process combineStacks {
     memory { (Math.max((5.GB).toBytes(), masks*.size().sum() * 10000) * task.attempt) as MemoryUnit }
     // Give more base time if postprocessing
     time { params.postprocess ? 45.m * Math.pow(2, task.attempt) : 10.min * Math.pow(2, task.attempt) }
+    // This is the normal publication point: the complete, full-image mask is
+    // safe for the Napari file watcher to load into a full-sized Labels layer.
     publishDir "$mask_output_dir", mode: 'copy'
 
     input:
