@@ -155,11 +155,9 @@ process runModel {
 
 process combineStacks {
     conda "${moduleDir}/envs/conda_combine_stacks.yml"
-    // Add a minimum amount of memory, otherwise scale as a multiple of the input mask size
-    // NOTE: Masks are RLE-compressed, so multiply by buffer (10) then by average compression factor (1000)
-    memory { (Math.max((5.GB).toBytes(), masks*.size().sum() * 10000) * task.attempt) as MemoryUnit }
-    // Give more base time if postprocessing
-    time { params.postprocess ? 45.m * Math.pow(2, task.attempt) : 10.min * Math.pow(2, task.attempt) }
+    // Site profiles can override these generic defaults for large datasets.
+    memory { 32.GB * task.attempt }
+    time { params.postprocess ? 45.m * Math.pow(2, task.attempt) : 1.h * task.attempt }
     // This is the normal publication point: the complete, full-image mask is
     // safe for the Napari file watcher to load into a full-sized Labels layer.
     publishDir "$mask_output_dir", mode: 'copy'

@@ -350,7 +350,7 @@ if __name__ == "__main__":
     cli_args = parser.parse_args()
 
     mem_used = psutil.Process(os.getpid()).memory_info().rss / (1024.0**3)
-    print(f"Memory used before loading stack: {mem_used:.2f} GB")
+    print(f"Memory used before loading stack: {mem_used:.2f} GB", flush=True)
     # Combine the masks
     if len(cli_args.masks) > 1:
         combined_masks, mask_type_from_file = combine_masks(
@@ -360,16 +360,16 @@ if __name__ == "__main__":
             model=cli_args.model,
         )
         mem_used = psutil.Process(os.getpid()).memory_info().rss / (1024.0**3)
-        print(f"Memory used after loading stack: {mem_used:.2f} GB")
+        print(f"Memory used after loading stack: {mem_used:.2f} GB", flush=True)
     else:
         combined_masks = aiod_rle.load_encoding(cli_args.masks[0])
         # NOTE: Extract metadata later from preprocess params
         combined_masks, decoded_metadata = aiod_rle.decode(combined_masks)
         # Extract mask_type from metadata to avoid expensive check_mask_type() later
         mask_type_from_file = decoded_metadata.get("metadata", {}).get("mask_type")
-    print(f"Combined masks shape: {combined_masks.shape}")
+    print(f"Combined masks shape: {combined_masks.shape}", flush=True)
     if cli_args.postprocess:
-        print("Postprocessing masks...")
+        print("Postprocessing masks...", flush=True)
         if cli_args.model == "sam" or cli_args.model == "sam2":
             # No need to align over slices if there are none! Labels consecutive already
             if combined_masks.ndim > 2:
@@ -385,7 +385,7 @@ if __name__ == "__main__":
     # Squeeze the array in case there is only one slice
     combined_masks = np.squeeze(combined_masks)
     mem_used = psutil.Process(os.getpid()).memory_info().rss / (1024.0**3)
-    print(f"Memory used in combination: {mem_used:.2f} GB")
+    print(f"Memory used in combination: {mem_used:.2f} GB", flush=True)
     # Save the masks
     output_format = cli_args.output_format.lower()
     save_path = f"{cli_args.mask_fname}_all.{output_format}"
@@ -416,13 +416,17 @@ if __name__ == "__main__":
         resolved_mask_type = mask_type_from_file or (
             cli_args.output_mask_type if cli_args.output_mask_type != "auto" else None
         )
+        print("Encoding combined masks as RLE...", flush=True)
         encoded_masks = aiod_rle.encode(
             combined_masks,
             mask_type=resolved_mask_type,
             metadata=metadata,
         )
-        # Free up memory (though too late at this point)
+        mem_used = psutil.Process(os.getpid()).memory_info().rss / (1024.0**3)
+        print(f"Memory used after RLE encoding: {mem_used:.2f} GB", flush=True)
+        print(f"Writing combined masks to {save_path}...", flush=True)
         aiod_rle.save_encoding(rle=encoded_masks, fpath=save_path)
+        print("Finished writing combined masks.", flush=True)
     del combined_masks
     # Remove published intermediate masks when they exist.
     for mask_path in cli_args.masks:
