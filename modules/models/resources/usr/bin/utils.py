@@ -8,6 +8,30 @@ import aiod_utils.rle as aiod_rle
 import numpy as np
 from skimage.segmentation import relabel_sequential
 
+DEFAULT_DIM_ORDER = "CZYX"
+
+# pandas type inference reads a hash like "32132e39" as scientific notation
+# and completely screws it up
+# So wrapper function around these important columns to avoid this
+IDENTITY_COLS = ("image_id", "prep_hash")
+
+
+def read_img_csv(csv_path, **kwargs):
+    """
+    Read an image CSV with the identity columns forced to string.
+
+    Identity columns absent from the CSV are ignored.
+    """
+    # Local import: utils is also imported by the run_<model>.py scripts, whose
+    # conda envs don't ship pandas
+    import pandas as pd
+
+    df = pd.read_csv(csv_path, dtype=dict.fromkeys(IDENTITY_COLS, str), **kwargs)
+    for col in df.columns.intersection(IDENTITY_COLS):
+        # Blank placeholders still round-trip as NaN under dtype=str
+        df[col] = df[col].fillna("")
+    return df
+
 
 def save_masks(
     save_dir,
@@ -68,6 +92,14 @@ def create_argparser_inference():
         choices=["binary", "instance", "auto"],
         help="Mask type to store in output ('binary', 'instance', or 'auto' to use the model default)",
     )
+    parser.add_argument(
+        "--model-axes",
+        default=None,
+        help=(
+            "Expected input axes for the model version (e.g. 'YX', 'ZYX', 'YXC'), "
+            "resolved from the registry at the setupModel stage."
+        ),
+    )
 
     return parser
 
@@ -84,10 +116,9 @@ def load_img(
     idxs: list[int, ...],
     channels: int | None = None,
     num_slices: int | None = None,
+    dim_order: str = DEFAULT_DIM_ORDER,
     **kwargs,
 ):
-    # Caller should specify desired dimension ordering (model dependent)
-    dim_order = kwargs.pop("dim_order", "CZYX")
     # TODO: Better to return Dask and index as needed?
     # NOTE: here rbg converted to channels; napari treats rbg separately
     # Keep large microscopy inputs lazy until after selecting the requested

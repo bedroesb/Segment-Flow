@@ -8,13 +8,41 @@ import numpy as np
 import psutil
 import skimage.measure
 import tifffile
-from aiod_utils.io import extract_idxs_from_fname, reduce_dtype
-from aiod_utils.preprocess import get_downsample_factor
+from aiod_utils.io import (
+    extract_idxs_from_fname,
+    get_combined_mask_name,
+    get_mask_name,
+    reduce_dtype,
+)
+from aiod_utils.preprocess import (
+    get_downsample_factor,
+    get_prep_hash,
+    load_methods,
+)
 from numba import jit, prange
 from numba.core import types
 from numba.typed import Dict
 from skimage.segmentation import relabel_sequential
 from tqdm import tqdm
+
+
+def get_preprocess_methods(config_path: str, prep_hash: str) -> list[dict]:
+    """
+    Find the specific preprocessing methods set matching prep_hash within the
+    run's full preprocessing config (params.preprocess). Matches by
+    recomputing the same hash used to create prep_hash in the first place
+    (see preprocess_image.py), rather than threading the set itself through
+    the pipeline's CSV, which can't safely carry raw JSON.
+    """
+    if not prep_hash:
+        return []
+    candidates = load_methods(config_path, filter_noop=True)
+    for methods in candidates:
+        if get_prep_hash(methods) == prep_hash:
+            return methods
+    raise ValueError(
+        f"No preprocessing set in {config_path} matches prep_hash '{prep_hash}'"
+    )
 
 
 def combine_masks(
@@ -406,8 +434,50 @@ if __name__ == "__main__":
         choices=["auto", "binary", "instance"],
         help="Mask type of the combined output ('binary' or 'instance')",
     )
+    parser.add_argument(
+        "--preprocess-config",
+        required=True,
+        help=(
+            "Path to a JSON file of the run's full params.preprocess config "
+            "(same file preprocessImage receives); used with --prep-hash to "
+            "recover e.g. the downsample factor for output metadata."
+        ),
+    )
+    parser.add_argument(
+        "--prep-hash",
+        required=False,
+        default="",
+        help="Hash identifying this image's preprocessing branch, empty if none",
+    )
+    parser.add_argument(
+        "--image-id",
+        required=True,
+        help="Image identity this mask belongs to, used to verify --mask-fname",
+    )
+    parser.add_argument(
+        "--param-hash",
+        required=True,
+        help="Run hash the pipeline resolved, used to verify --mask-fname",
+    )
 
     cli_args = parser.parse_args()
+
+    # getMaskName in main.nf has to build the mask filename independently -
+    # Nextflow needs output patterns before the script runs, which Groovy cannot
+    # get from Python. Check the two agree rather than trusting they do: a silent
+    # divergence writes masks that aiod_napari's watcher never matches.
+    expected_fname = get_mask_name(
+        run_hash=cli_args.param_hash,
+        image_id=cli_args.image_id,
+        prep_hash=cli_args.prep_hash or None,
+    )
+    if cli_args.mask_fname != expected_fname:
+        raise ValueError(
+            f"Mask filename from the pipeline ('{cli_args.mask_fname}') does not "
+            f"match the one aiod_utils builds ('{expected_fname}'). "
+            "getMaskName in main.nf has drifted from aiod_utils.io.get_mask_name - "
+            "update both to the same format."
+        )
 
     mem_used = psutil.Process(os.getpid()).memory_info().rss / (1024.0**3)
     print(f"Memory used before loading stack: {mem_used:.2f} GB", flush=True)
@@ -448,16 +518,24 @@ if __name__ == "__main__":
     print(f"Memory used in combination: {mem_used:.2f} GB", flush=True)
     # Save the masks
     output_format = cli_args.output_format.lower()
-    save_path = f"{cli_args.mask_fname}_all.{output_format}"
-    # Get downsample factor for metadata if used
+    save_path = get_combined_mask_name(cli_args.mask_fname, output_format)
+    # Get downsample factor for metadata if used.
     # NOTE: Our Napari plugin uses this as an identifier to rescale for visualization
-    # FIXME: This is brittle and poor, the params should be extracted from the preprocess params
-    # Which themselves should be tied to the image that they produced
-    if "Downsample" in cli_args.mask_fname:
-        downsample_factor = get_downsample_factor(filename=cli_args.mask_fname)
-        metadata = {"downsample_factor": downsample_factor}
-    else:
-        metadata = {}
+    # Recover this branch's preprocessing set from the run's full config by
+    # matching prep_hash
+    preprocess_methods = get_preprocess_methods(
+        cli_args.preprocess_config, cli_args.prep_hash
+    )
+    downsample_factor = (
+        get_downsample_factor(methods=preprocess_methods)
+        if preprocess_methods
+        else None
+    )
+    metadata = (
+        {"downsample_factor": downsample_factor}
+        if downsample_factor is not None
+        else {}
+    )
     if output_format == "tiff":
         # Resolve 'auto' using the mask type recorded in the individual patches
         resolved_mask_type = (

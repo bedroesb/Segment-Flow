@@ -1,0 +1,2 @@
+img_path,height,width,num_slices,channels,dtype,prep_hash,image_id
+/fake/path/em_2d_01.tif,64,64,1,1,uint8,32132e39,em_2d_01_tiff
