@@ -142,6 +142,66 @@ def insert_mask(
     return all_masks
 
 
+def encode_instance_labels(mask: np.ndarray, metadata: dict | None = None) -> list[dict]:
+    """Encode a 2D/3D label image without expanding each label to a bool plane."""
+    if metadata is None:
+        metadata = {}
+    mask = reduce_dtype(mask)
+    if mask.ndim == 2:
+        mask = mask[np.newaxis, ...]
+    elif mask.ndim >= 4:
+        mask = np.squeeze(mask)
+        if mask.ndim >= 4:
+            raise ValueError(
+                f"Mask has {mask.ndim} dimensions, must be 2D or 3D (got {mask.shape})"
+            )
+
+    encoded = []
+    for slice_idx, mask_slice in enumerate(mask):
+        h, w = mask_slice.shape
+        flat = np.ascontiguousarray(mask_slice.T).reshape(-1)
+        total = int(flat.size)
+        change_idxs = np.flatnonzero(flat[1:] != flat[:-1]) + 1
+        starts = np.concatenate(([0], change_idxs))
+        ends = np.concatenate((change_idxs, [total]))
+        values = flat[starts]
+
+        segments_by_label = {}
+        for start, end, value in zip(starts, ends, values, strict=True):
+            label = int(value)
+            if label == 0:
+                continue
+            segments_by_label.setdefault(label, []).append((int(start), int(end)))
+
+        if not segments_by_label:
+            encoded.append([{"size": [h, w], "counts": [total], "idx": 0}])
+            continue
+
+        encoded_slice = []
+        for label in sorted(segments_by_label):
+            segments = segments_by_label[label]
+            counts = [] if segments[0][0] > 0 else [0]
+            cursor = 0
+            for start, end in segments:
+                if start > cursor:
+                    counts.append(start - cursor)
+                counts.append(end - start)
+                cursor = end
+            if cursor < total:
+                counts.append(total - cursor)
+            encoded_slice.append({"size": [h, w], "counts": counts, "idx": label})
+        encoded.append(encoded_slice)
+
+        if (slice_idx + 1) % 25 == 0 or slice_idx + 1 == mask.shape[0]:
+            print(
+                f"Encoded {slice_idx + 1}/{mask.shape[0]} slices as instance RLE...",
+                flush=True,
+            )
+
+    encoded.append({"metadata": {**metadata, "mask_type": "instance"}})
+    return encoded
+
+
 def connect_components(all_masks: np.ndarray):
     # Convert to dask array
     all_masks = da.from_array(all_masks)
@@ -417,11 +477,14 @@ if __name__ == "__main__":
             cli_args.output_mask_type if cli_args.output_mask_type != "auto" else None
         )
         print("Encoding combined masks as RLE...", flush=True)
-        encoded_masks = aiod_rle.encode(
-            combined_masks,
-            mask_type=resolved_mask_type,
-            metadata=metadata,
-        )
+        if resolved_mask_type == "instance":
+            encoded_masks = encode_instance_labels(combined_masks, metadata=metadata)
+        else:
+            encoded_masks = aiod_rle.encode(
+                combined_masks,
+                mask_type=resolved_mask_type,
+                metadata=metadata,
+            )
         mem_used = psutil.Process(os.getpid()).memory_info().rss / (1024.0**3)
         print(f"Memory used after RLE encoding: {mem_used:.2f} GB", flush=True)
         print(f"Writing combined masks to {save_path}...", flush=True)
