@@ -171,63 +171,13 @@ def insert_mask(
 
 
 def encode_instance_labels(mask: np.ndarray, metadata: dict | None = None) -> list[dict]:
-    """Encode a 2D/3D label image without expanding each label to a bool plane."""
-    if metadata is None:
-        metadata = {}
-    mask = reduce_dtype(mask)
-    if mask.ndim == 2:
-        mask = mask[np.newaxis, ...]
-    elif mask.ndim >= 4:
-        mask = np.squeeze(mask)
-        if mask.ndim >= 4:
-            raise ValueError(
-                f"Mask has {mask.ndim} dimensions, must be 2D or 3D (got {mask.shape})"
-            )
+    """Encode a 2D/3D label image as bbox-cropped instance RLE.
 
-    encoded = []
-    for slice_idx, mask_slice in enumerate(mask):
-        h, w = mask_slice.shape
-        flat = np.ascontiguousarray(mask_slice.T).reshape(-1)
-        total = int(flat.size)
-        change_idxs = np.flatnonzero(flat[1:] != flat[:-1]) + 1
-        starts = np.concatenate(([0], change_idxs))
-        ends = np.concatenate((change_idxs, [total]))
-        values = flat[starts]
-
-        segments_by_label = {}
-        for start, end, value in zip(starts, ends, values, strict=True):
-            label = int(value)
-            if label == 0:
-                continue
-            segments_by_label.setdefault(label, []).append((int(start), int(end)))
-
-        if not segments_by_label:
-            encoded.append([{"size": [h, w], "counts": [total], "idx": 0}])
-            continue
-
-        encoded_slice = []
-        for label in sorted(segments_by_label):
-            segments = segments_by_label[label]
-            counts = [] if segments[0][0] > 0 else [0]
-            cursor = 0
-            for start, end in segments:
-                if start > cursor:
-                    counts.append(start - cursor)
-                counts.append(end - start)
-                cursor = end
-            if cursor < total:
-                counts.append(total - cursor)
-            encoded_slice.append({"size": [h, w], "counts": counts, "idx": label})
-        encoded.append(encoded_slice)
-
-        if (slice_idx + 1) % 25 == 0 or slice_idx + 1 == mask.shape[0]:
-            print(
-                f"Encoded {slice_idx + 1}/{mask.shape[0]} slices as instance RLE...",
-                flush=True,
-            )
-
-    encoded.append({"metadata": {**metadata, "mask_type": "instance"}})
-    return encoded
+    ``aiod-utils>=0.2.0`` encodes each instance within its bounding box, avoiding
+    the old full-frame-per-instance format that made Napari spend minutes
+    decoding large Cellpose-SAM outputs.
+    """
+    return aiod_rle.encode(mask, mask_type="instance", metadata=metadata or {})
 
 
 def connect_components(all_masks: np.ndarray):
