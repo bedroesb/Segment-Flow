@@ -170,16 +170,6 @@ def insert_mask(
     return all_masks
 
 
-def encode_instance_labels(mask: np.ndarray, metadata: dict | None = None) -> list[dict]:
-    """Encode a 2D/3D label image as bbox-cropped instance RLE.
-
-    ``aiod-utils>=0.2.0`` encodes each instance within its bounding box, avoiding
-    the old full-frame-per-instance format that made Napari spend minutes
-    decoding large Cellpose-SAM outputs.
-    """
-    return aiod_rle.encode(mask, mask_type="instance", metadata=metadata or {})
-
-
 def connect_components(all_masks: np.ndarray):
     # Convert to dask array
     all_masks = da.from_array(all_masks)
@@ -505,14 +495,11 @@ if __name__ == "__main__":
             cli_args.output_mask_type if cli_args.output_mask_type != "auto" else None
         )
         print("Encoding combined masks as RLE...", flush=True)
-        if resolved_mask_type == "instance":
-            encoded_masks = encode_instance_labels(combined_masks, metadata=metadata)
-        else:
-            encoded_masks = aiod_rle.encode(
-                combined_masks,
-                mask_type=resolved_mask_type,
-                metadata=metadata,
-            )
+        encoded_masks = aiod_rle.encode(
+            combined_masks,
+            mask_type=resolved_mask_type,
+            metadata=metadata,
+        )
         mem_used = psutil.Process(os.getpid()).memory_info().rss / (1024.0**3)
         print(f"Memory used after RLE encoding: {mem_used:.2f} GB", flush=True)
         print(f"Writing combined masks to {save_path}...", flush=True)
