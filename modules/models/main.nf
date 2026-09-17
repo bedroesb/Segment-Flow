@@ -51,7 +51,14 @@ process splitStacks {
     conda "${moduleDir}/envs/conda_combine_stacks.yml"
     memory { 500.MB * task.attempt as MemoryUnit }
     time { 5.m * task.attempt }
-    // publishDir "$params.cache_dir", mode: 'copy'
+    // The output CSV has one row per substack, so this doubles as the job count
+    // Only accurate here once all memory/model/substack calcs taken into account
+    // This can be consumed by front-ends for accurate job count
+    publishDir(
+        path: { "${params.cache_dir ?: "${params.root_dir}/aiod_cache"}/splits" },
+        mode: 'copy',
+        saveAs: { "substacks_${params.resolved_param_hash ?: params.param_hash ?: 'unhashed'}.csv" }
+    )
 
     input:
     path csv_path
@@ -65,11 +72,8 @@ process splitStacks {
     // https://github.com/nextflow-io/nextflow/issues/3595 should track this
     num_substacks = params.num_substacks.replace(",", " ")
     overlap = params.overlap.replace(",", " ")
-    substack_memory_fraction = params.containsKey('substack_memory_fraction') && params.substack_memory_fraction != null \
-        ? params.substack_memory_fraction \
-        : 0.125
     def mem_arg = (params.containsKey('memory_per_job') && params.memory_per_job) \
-        ? "--memory-per-job ${(params.memory_per_job as nextflow.util.MemoryUnit).toBytes()} --memory-safety-factor ${substack_memory_fraction}" \
+        ? "--memory-per-job ${(params.memory_per_job as nextflow.util.MemoryUnit).toBytes()}" \
         : ""
     // Resolve the per-model compute cap (falling back to the global default), then apply the
     // per-deployment scale so weaker/stronger GPUs can tune all caps with one param.

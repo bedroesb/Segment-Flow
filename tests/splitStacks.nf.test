@@ -6,11 +6,10 @@ nextflow_process {
     // ---------------------------------------------------------------------------
     // Substack sizing is bounded by BOTH a memory budget (memory_per_job) AND a
     // per-model compute cap (max_substack / model_max_substack, scaled by
-    // substack_scale). memory_per_job can also be reduced by substack_memory_fraction
-    // before create_splits.py takes the element-wise min of the memory and compute caps.
+    // substack_scale). create_splits.py takes the element-wise min of the two.
     //
-    // The first tests isolate the memory path and safety factor; the rest exercise
-    // the compute cap and its scaling.
+    // The first two tests isolate the memory path by setting an effectively
+    // infinite compute cap; the rest exercise the compute cap and its scaling.
     //
     // To run locally (requires Nextflow + conda env):
     //   nf-test test tests/splitStacks.nf.test --profile local
@@ -18,48 +17,15 @@ nextflow_process {
     //   nf-test test tests/splitStacks.nf.test --profile crick
     // ---------------------------------------------------------------------------
 
-    test("64 substacks for 100 MB memory_per_job with default safety factor") {
+    test("memory path: 8 substacks for 100 MB memory_per_job on 2000x400x100 float32 image") {
 
         when {
             params {
                 num_substacks      = "auto,auto,auto"
                 overlap            = "0.0,0.0,0.0"
                 memory_per_job     = "100.MB"
-                substack_memory_fraction = 0.125
-                model              = "panseg"
-                max_substack       = [5000, 5000, 50]
-                substack_scale     = 1.0
-                root_dir = "."
-            }
-            process {
-                """
-                input[0] = file("${projectDir}/tests/assets/test_splits_input.csv")
-                input[1] = file("${projectDir}/tests/assets/dummy_chkpt")
-                """
-            }
-        }
-
-        then {
-            assert process.success
-
-            def rows = path(process.out.csv_file.get(0)).readLines()
-            assert rows.size() - 1 == 64
-        }
-    }
-
-    // ---------------------------------------------------------------------------
-    // Compatibility test: a safety factor of 1.0 preserves the previous dynamic
-    // memory-sizing behaviour.
-    // ---------------------------------------------------------------------------
-
-    test("8 substacks for 100 MB memory_per_job with safety factor 1") {
-
-        when {
-            params {
-                num_substacks      = "auto,auto,auto"
-                overlap            = "0.0,0.0,0.0"
-                memory_per_job     = "100.MB"
-                substack_memory_fraction = 1.0
+                // Use a model with no per-model cap so the cap is the default [5000,5000,50]
+                // (== old MAX_SUBSTACK_SIZE) — non-interfering here, so this isolates the memory path.
                 model              = "panseg"
                 max_substack       = [5000, 5000, 50]
                 substack_scale     = 1.0
@@ -122,7 +88,6 @@ nextflow_process {
                 num_substacks      = "auto,auto,auto"
                 overlap            = "0.0,0.0,0.0"
                 memory_per_job     = "50.GB"
-                substack_memory_fraction = 1.0
                 model              = "sam2"
                 model_max_substack = [sam2: [4096, 4096, 8]]
                 max_substack       = [5000, 5000, 50]
@@ -163,7 +128,6 @@ nextflow_process {
                 num_substacks      = "auto,auto,auto"
                 overlap            = "0.0,0.0,0.0"
                 memory_per_job     = "50.GB"
-                substack_memory_fraction = 1.0
                 model              = "sam2"
                 model_max_substack = [sam2: [4096, 4096, 8]]
                 max_substack       = [5000, 5000, 50]
@@ -197,7 +161,6 @@ nextflow_process {
                 num_substacks      = "auto,auto,auto"
                 overlap            = "0.0,0.0,0.0"
                 memory_per_job     = "1.GB"
-                substack_memory_fraction = 1.0
                 model              = "cellpose"
                 model_max_substack = [:]
                 max_substack       = [5000, 5000, 50]
@@ -235,7 +198,6 @@ nextflow_process {
                 num_substacks      = "auto,auto,auto"
                 overlap            = "0.0,0.0,0.0"
                 memory_per_job     = "50.GB"
-                substack_memory_fraction = 1.0
                 model              = "sam2"
                 // null H/W = uncapped (defer to memory); cap depth only — the intended pattern.
                 model_max_substack = [sam2: [null, null, 8]]
@@ -300,6 +262,44 @@ nextflow_process {
             def ids    = rows[1..-1].collect { it.split(",")[idx("image_id")]  }.toUnique()
             assert hashes == ["32132e39"]
             assert ids == ["em_2d_01_tiff"]
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // The substack rows are the only place this run's job count exists before the
+    // jobs are submitted, and a front-end cannot re-derive it (the caps come from
+    // nextflow.config and the active profile). Publishing it per-run is what lets
+    // the napari progress bar be exact rather than an estimate.
+    // ---------------------------------------------------------------------------
+
+    test("publishes the substack rows under the cache, named for the run") {
+
+        when {
+            params {
+                num_substacks      = "auto,auto,auto"
+                overlap            = "0.0,0.0,0.0"
+                memory_per_job     = null
+                model              = "panseg"
+                max_substack       = [5000, 5000, 50]
+                substack_scale     = 1.0
+                root_dir           = "$outputDir"
+                resolved_param_hash = "deadbeef"
+            }
+            process {
+                """
+                input[0] = file("${projectDir}/tests/assets/test_splits_input.csv")
+                input[1] = file("${projectDir}/tests/assets/dummy_chkpt")
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            def published = path("$outputDir/aiod_cache/splits/substacks_deadbeef.csv")
+            assert published.exists()
+            // Same rows as the channel output: the published copy is the job count
+            assert published.readLines() == path(process.out.csv_file.get(0)).readLines()
+            assert published.readLines().size() - 1 == 2
         }
     }
 }

@@ -44,16 +44,6 @@ if __name__ == "__main__":
         type=int,
         help="Memory available per runModel job in bytes (used to compute substack size dynamically).",
     )
-    parser.add_argument(
-        "--memory-safety-factor",
-        required=False,
-        default=1.0,
-        type=float,
-        help=(
-            "Fraction of --memory-per-job used when dynamically calculating "
-            "the maximum raw-image substack size. Must be > 0 and <= 1."
-        ),
-    )
 
     def _cap_value(s: str) -> int | None:
         """Parse a --max-substack token: 'null'/'none'/'' -> None (no cap), else int."""
@@ -75,8 +65,6 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    if not 0 < args.memory_safety_factor <= 1:
-        parser.error("--memory-safety-factor must be > 0 and <= 1")
 
     def _min_dim(a: int | None, b: int | None) -> int | None:
         """min of two per-axis caps; None means 'no cap on this axis' -> take the other."""
@@ -161,10 +149,9 @@ if __name__ == "__main__":
         # Only when memory still binds after compute-capping do both caps apply (element-wise min of the two).
         # compute_max_substack_size returns its input shape unchanged iff that shape fits the budget
         if args.memory_per_job is not None:
-            effective_memory = int(args.memory_per_job * args.memory_safety_factor)
             if compute_cap is None:
                 max_substack_size = compute_max_substack_size(
-                    memory_bytes=effective_memory,
+                    memory_bytes=args.memory_per_job,
                     dtype=img_dtype,
                     image_shape=img_shape,
                 )
@@ -172,7 +159,7 @@ if __name__ == "__main__":
                 capped_shape = min_stack(img_shape, compute_cap)
                 fits_memory = (
                     compute_max_substack_size(
-                        memory_bytes=effective_memory,
+                        memory_bytes=args.memory_per_job,
                         dtype=img_dtype,
                         image_shape=capped_shape,
                     )
@@ -182,7 +169,7 @@ if __name__ == "__main__":
                     max_substack_size = capped_shape
                 else:
                     mem_cap = compute_max_substack_size(
-                        memory_bytes=effective_memory,
+                        memory_bytes=args.memory_per_job,
                         dtype=img_dtype,
                         image_shape=img_shape,
                     )
